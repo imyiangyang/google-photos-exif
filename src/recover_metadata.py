@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+from concurrent.futures.thread import ThreadPoolExecutor
 
 import magic
 from tqdm import tqdm
@@ -37,7 +38,7 @@ class Metadata:
     }
 
     @staticmethod
-    def recover(root_folder: str, output_folder: str) -> None:
+    def recover(root_folder: str, output_folder: str, worker: int=10) -> None:
         """
         Given a root_folder it will associate all files (images and videos) to their associated metadata file.
         After it will write the EXIF metadata present in the metadata file to the image/video file writing the new file
@@ -46,12 +47,12 @@ class Metadata:
         files_with_metadata = Metadata._get_files_with_metadata(root_folder)
         print(f'{len(files_with_metadata)} file(s) to recover metadata')
 
-        for media_file, metadata_file in tqdm(files_with_metadata.items()):
+        def process_media_file(media_file, metadata_file, root_folder, output_folder):
             output_filepath = Metadata._get_output_filename(root_folder, output_folder, media_file)
             if metadata_file is None:
                 tqdm.write(f'Skipping {media_file} as there is no metadata associated. Saving to output folder')
                 Metadata._copy_file(media_file, output_filepath)
-                continue
+                return
 
             tqdm.write(f'Recovering {media_file}')
             with open(metadata_file) as f:
@@ -63,7 +64,7 @@ class Metadata:
                 tqdm.write(f'Mime type {mime_type} is not supported. Skipping metadata file {metadata_file}. '
                            f'Saving image/video file to output folder')
                 Metadata._copy_file(media_file, output_filepath)
-                continue
+                return
 
             output_dir = os.path.dirname(output_filepath)
             if not os.path.exists(output_dir):
@@ -96,6 +97,10 @@ class Metadata:
 
             creation_timestamp = int(metadata['creationTime']['timestamp'])
             os.utime(output_filepath, (creation_timestamp, creation_timestamp))
+
+        with ThreadPoolExecutor(max_workers=worker) as executor:
+            for media_file, metadata_file in files_with_metadata.items():
+                executor.submit(process_media_file, media_file, metadata_file, root_folder, output_folder)
 
         print('Recovery of metadata completed')
 
